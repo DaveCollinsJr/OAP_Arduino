@@ -48,10 +48,12 @@ int sdCardControlPin = 4;  // SD Card Control Pin
 byte incomingbyte;
 byte responseData;  // Used to validate responses
 int rc; // response counter
-byte responseMessage[9]; // Used to hold responses
+byte responseMessage[20]; // Used to hold responses
 
 //SoftwareSerial(rxPin, txPin) 
-SoftwareSerial mySerial(50,51);                     //Configure pin 5(rx) and 6(tx) as soft serial port
+SoftwareSerial mySerial(50,51);                     //Configure pin (rx) and (tx) as soft serial port
+// Try using MEGA serial 2 which should be: 17 (RX) and 16 (TX)
+
 
 // Used to hold the JPEG file size
 int sizeMessage[9];
@@ -86,9 +88,31 @@ void setup()
 { 
   Serial.begin(9600);
   mySerial.begin(38400);
+  Serial2.begin(38400);
+  delay(1000);
   
-  if (mySerial.isListening() )
-    Serial.println("Camera is listening");
+//  if (Serial2.isListening() )
+ //   Serial.println("Camera is listening");
+  
+  // Wait for proper response from camera
+  Serial.println("Waiting for camera init end"); 
+  i = 0;
+  while(i <= 15)
+  {
+    if (Serial2.available()>0) {
+      incomingbyte=Serial2.read();
+      responseMessage[i] = incomingbyte;
+      Serial.print(responseMessage[i]);
+      i++;
+    }
+  }
+  
+  // Did we get the expected response?
+  if (responseMessage[0] == 0x36 && responseMessage[1] == 0x32 && responseMessage[14] == 0x0A) {
+    Serial.println("Camera is initialized");
+  }
+  else
+    Serial.println("WARNING: Camera not initialized");  
   
   // Set up SD Card
   pinMode(sdCardControlPin, OUTPUT);
@@ -97,7 +121,7 @@ void setup()
     Serial.println("  Card failed, or not present"); // don't do anything more:
     return;
   }
-  Serial.println("==================== SD Card initialized. ====================");
+  Serial.println("SD Card initialized.");
       
 }
 
