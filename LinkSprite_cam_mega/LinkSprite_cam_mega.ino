@@ -14,15 +14,15 @@ As such, you don't really need any of the motion detector connections outlined b
     
     Circuit (MEGA 2560):  
       A) Pin 4 (Digital Output) RESERVED: SS for SD Card
-      C) Pin 16 (Digital Output) to "Rxd(In)" Pin of camera (was Red wire, fourth wire in our camera)
-      B) Pin 17 (Digital Input) to "Txd(Out)" Pin of camera (was Brown wire, third wire in our camera)
+      B) Pin 7 (Digital Output) To "SLEEP" (pin 7) of Motion Detector - used to wake it up
+      C) Pin 8 (Digital Input) To "MOTION" (pin 5) of Motion Detector - LOW when motion is sensed
+      D) Pin 10 (Digital Output) RESERVED: SS for Ethernet Shield
+      E) Pin 11 (Digital Output) RESERVED: SPI to Ethernet Shield
+      F) Pin 12 (Digital Output) RESERVED: SPI to Ethernet Shield
+      G) Pin 13 (Digital Output) RESERVED: SPI to Ethernet Shield
+      H) Pin 16 (Digital Output) to "Rxd(In)" Pin of camera (was Red wire, fourth wire in our camera)
+      I) Pin 17 (Digital Input) to "Txd(Out)" Pin of camera (was Brown wire, third wire in our camera)
           Remember!  The Camera's TRANSMIT is _OUR_ RECEIVE and vice-versa!
-      D) Pin 7 (Digital Output) To "SLEEP" (pin 7) of Motion Detector - used to wake it up
-      E) Pin 8 (Digital Input) To "MOTION" (pin 5) of Motion Detector - LOW when motion is sensed
-      F) Pin 10 (Digital Output) RESERVED: SS for Ethernet Shield
-      G) Pin 11 (Digital Output) RESERVED: SPI to Ethernet Shield
-      H) Pin 12 (Digital Output) RESERVED: SPI to Ethernet Shield
-      I) Pin 13 (Digital Output) RESERVED: SPI to Ethernet Shield
       J) +5V to +5V of camera (was Grey wire, first wire in our camera)
       K) GND to GND of camera (was Purple wire, second wire in our camera)
       L) GND to GND of Motion Detector (Pins 1 (GND), 3 (DLY), 4 (SNS), and 8 (GND) of ePIR)
@@ -31,6 +31,10 @@ As such, you don't really need any of the motion detector connections outlined b
   Notes: 
     Not all pins on the Mega and Mega 2560 support change interrupts, so only the following
       can be used for RX: 10, 11, 12, 13, 50, 51, 52, 53, 62, 63, 64, 65, 66, 67, 68, 69
+  
+  ToDo:
+    * Fix it so it would be happy with image filenames up to 999 (OAP_999.jpg)
+    * Possibly take different actions if don't receive expected responses from Camera
   
   History:
     2013-01-15 - DECj: Converting to use SoftwareSerial library instead of newsoftserial.
@@ -52,7 +56,7 @@ byte responseMessage[110]; // Used to hold responses
 
 // Used to hold the JPEG file size
 int sizeMessage[9];
-int imageSize; // holds the size of the JPEG image
+unsigned long imageSize; // holds the size of the JPEG image
 
 int i=0; // stupid loop
 
@@ -77,18 +81,19 @@ int pictureTaken = 0;  // Number of pictures we've taken since restarted.
 File dataFile;
                                
 boolean SendResetCmd();
-void SendTakePhotoCmd();
+boolean SendTakePhotoCmd();
 void SendReadDataCmd();
 void SendStopTakingPicturesCmd();
 
 void setup()
 { 
   Serial.begin(9600);
-  // Using MEGA serial 2 which is 17 (RX) and 16 (TX)
+  // Using MEGA serial 2 which is 17 (RX) and 16 (TX) for the Camera
   Serial2.begin(38400);
   delay(5000);  // Give the camera 5 seconds to finish waking up
   
   // Do not Wait for proper response from camera - it often comes before the Mega is awake
+  // NEVER attempt any camera communications before initializing SD card.
   
   // Set up SD Card
   pinMode(sdCardControlPin, OUTPUT);
@@ -132,21 +137,8 @@ void loop()
     Serial.println("Taking Picture in 2.5 seconds... Say Cheese!");
      delay(2500);    //After reset, wait 2-3 second to send take picture command
      
-     // --- Clear the input buffer - we haven't asked for anything yet ---
-      Serial.println("Clearing input buffer"); 
-      while(Serial2.available()>0)
-      {
-        incomingbyte=Serial2.read();
-      }
-         
      Serial.println("Sending Take Photo Command");  
      SendTakePhotoCmd();
-     // They should respond with 76 00 36 00 00
-     while(Serial2.available()>0)
-      {
-        incomingbyte=Serial2.read();
-      }   
-
 
     // Get Image Size **************************************
       Serial.println("Sending Read Image Size command"); 
@@ -161,7 +153,7 @@ void loop()
       {
       }
 
-      while(Serial2.available()>0) // Read the serial buffer contents
+      while(Serial2.available()>0 && i < 9) // Read the serial buffer contents
       {
         incomingbyte=Serial2.read();
         sizeMessage[i] = incomingbyte;
@@ -189,11 +181,7 @@ void loop()
  
         // Sometimes there might be gook in the buffer after the last packet and before
         // we ask it for more data... Ignore that.
-        while(Serial2.available() > 0) 
-        {
-          incomingbyte=Serial2.read();
-        }  
-        
+        dumpCameraInput(false);  // Do this in silent mode!
         
         // Tell the camera we would like a picture and explain to it our buffer size and
         // requested delay... 
@@ -300,7 +288,7 @@ boolean SendResetCmd()
      //              v    &
 
       // First, flush the buffer
-      dumpCameraInput();
+      dumpCameraInput(true);
 
       Serial2.write(0x56);
       Serial2.write((uint8_t)0x00);
@@ -336,25 +324,30 @@ boolean SendResetCmd()
     }           
 }
 
-void dumpCameraInput()
+void dumpCameraInput(boolean verbose)
 {
   // Use this before issuing a command to be sure the buffer is empty.
-  Serial.print("Dumping...");
+  if (verbose == true)
+    Serial.print("Dumping...");
   while(Serial2.available() > 0) 
      {
         incomingbyte=Serial2.read();
-        Serial.write(incomingbyte);
+        if (verbose == true)
+          Serial.write(incomingbyte);
       }  
-  Serial.println("... END DUMPING");
+  if (verbose == true)
+    Serial.println("... END DUMPING");
   
 }
 
 
 //Send take picture command
 // Just tells the camera to take a picture, doesn't send the data to us.
-void SendTakePhotoCmd()
+boolean SendTakePhotoCmd()
 {    // Send: 56 00 36 01 00
-     // Response: 76 00 36 00 00  (5 Bytes)
+     // Response: 76 00 36 00 00  (5 Bytes:  v  6  )
+     
+     dumpCameraInput(true);
      
       // Send the take picture command
       Serial2.write(0x56);
@@ -362,6 +355,34 @@ void SendTakePhotoCmd()
       Serial2.write(0x36);
       Serial2.write(0x01);
       Serial2.write((uint8_t)0x00);  
+      
+       startWaitTime = millis();
+    i = 0;
+    while(i <= 4 && (millis()-startWaitTime < deadManTimer))
+    {
+      if (Serial2.available() > 0) {
+        incomingbyte=Serial2.read();
+        responseMessage[i] = incomingbyte;
+        //Serial.print(responseMessage[i], HEX);
+        Serial.write(responseMessage[i]);
+        if (incomingbyte == 0x0A)
+          Serial.println();
+        else {
+          //Serial.print(" ");
+        }
+        i++;
+      }
+    }
+    
+    if (responseMessage[0] == 0x76 && responseMessage[2] == 0x36) {
+    Serial.println("Take Picture Command Sent");
+    return true;
+    }
+    else
+    {
+      Serial.println("Warning: Expected Take Picture response not found");
+      return false;
+    }           
         
 }
 
@@ -369,6 +390,9 @@ void SendTakePhotoCmd()
 // Asks the camera for the size of the image it has taken.
 void GetImageSize() 
 { 
+  
+  dumpCameraInput(true);
+  
   Serial2.write(0x56); 
   Serial2.write(byte(0x00)); 
   Serial2.write(0x34); 
