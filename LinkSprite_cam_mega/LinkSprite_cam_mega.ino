@@ -4,20 +4,19 @@ Infrared Camera Test Code for MEGA.  This is meant to be a functional test of yo
 circuit and board before you use oap_motioncamera_mega (which is the full Ethernet Shield, Motion Detector, and camera)
 As such, you don't really need any of the motion detector connections outlined below
 
-
    Needs:
       1) TTL Camera, preferably infrafred
       2) Ethernet Shield with Micro-SD card
       3) Micro-SD card in shield
       4) Motion-trigger (I used Zilog E-PIR in hardware mode)
-      5) Arduino (Uno used for this project)
+      5) Arduino (Mega used for this project)
       A) Update the "mac" (MAC Address) in credentials.h from the shield, then place Arduino Ethernet Shield on the Arduino
     
     Circuit (MEGA 2560):  
       A) Pin 4 (Digital Output) RESERVED: SS for SD Card
-      B) Pin 50 (Digital Output) to "Txd(Out)" Pin of camera (was Brown wire, third wire in our camera)
+      C) Pin 16 (Digital Output) to "Rxd(In)" Pin of camera (was Red wire, fourth wire in our camera)
+      B) Pin 17 (Digital Input) to "Txd(Out)" Pin of camera (was Brown wire, third wire in our camera)
           Remember!  The Camera's TRANSMIT is _OUR_ RECEIVE and vice-versa!
-      C) Pin 51 (Digital Output) to "Rxd(In)" Pin of camera (was Red wire, fourth wire in our camera)
       D) Pin 7 (Digital Output) To "SLEEP" (pin 7) of Motion Detector - used to wake it up
       E) Pin 8 (Digital Input) To "MOTION" (pin 5) of Motion Detector - LOW when motion is sensed
       F) Pin 10 (Digital Output) RESERVED: SS for Ethernet Shield
@@ -37,10 +36,10 @@ As such, you don't really need any of the motion detector connections outlined b
     2013-01-15 - DECj: Converting to use SoftwareSerial library instead of newsoftserial.
     2013-01-22 - DECj: Modifying it so that it writes to SD card
     2013-02-01 - DECj: Modifying for MEGA board.
+    2013-02-05 - DECj: Finished MEGA board testing in the other project.  Continuing mods here.  No longer using SoftwareSerial.
 
 */
 
-#include <SoftwareSerial.h>
 #include <SD.h>
 
 int sdCardControlPin = 4;  // SD Card Control Pin
@@ -48,11 +47,7 @@ int sdCardControlPin = 4;  // SD Card Control Pin
 byte incomingbyte;
 byte responseData;  // Used to validate responses
 int rc; // response counter
-byte responseMessage[20]; // Used to hold responses
-
-//SoftwareSerial(rxPin, txPin) 
-SoftwareSerial mySerial(50,51);                     //Configure pin (rx) and (tx) as soft serial port
-// Try using MEGA serial 2 which should be: 17 (RX) and 16 (TX)
+byte responseMessage[110]; // Used to hold responses
 
 
 // Used to hold the JPEG file size
@@ -66,7 +61,6 @@ int i=0; // stupid loop
 // yes that was the problem.  Switching this to Long...
 long a=0x0000;
 
-
 int j=0,count=0;                         
 uint8_t MH,ML;
 boolean EndFlag=0;
@@ -75,11 +69,14 @@ int packetCount = 0;
 int badPackets = 0;
 unsigned int bytesRead = 0;
 
+const unsigned long deadManTimer = 6000;
+unsigned long startWaitTime;
+
 int pictureTaken = 0;  // Number of pictures we've taken since restarted.
 
 File dataFile;
                                
-void SendResetCmd();
+boolean SendResetCmd();
 void SendTakePhotoCmd();
 void SendReadDataCmd();
 void SendStopTakingPicturesCmd();
@@ -87,32 +84,11 @@ void SendStopTakingPicturesCmd();
 void setup()
 { 
   Serial.begin(9600);
-  mySerial.begin(38400);
+  // Using MEGA serial 2 which is 17 (RX) and 16 (TX)
   Serial2.begin(38400);
-  delay(1000);
+  delay(5000);  // Give the camera 5 seconds to finish waking up
   
-//  if (Serial2.isListening() )
- //   Serial.println("Camera is listening");
-  
-  // Wait for proper response from camera
-  Serial.println("Waiting for camera init end"); 
-  i = 0;
-  while(i <= 15)
-  {
-    if (Serial2.available()>0) {
-      incomingbyte=Serial2.read();
-      responseMessage[i] = incomingbyte;
-      Serial.print(responseMessage[i]);
-      i++;
-    }
-  }
-  
-  // Did we get the expected response?
-  if (responseMessage[0] == 0x36 && responseMessage[1] == 0x32 && responseMessage[14] == 0x0A) {
-    Serial.println("Camera is initialized");
-  }
-  else
-    Serial.println("WARNING: Camera not initialized");  
+  // Do not Wait for proper response from camera - it often comes before the Mega is awake
   
   // Set up SD Card
   pinMode(sdCardControlPin, OUTPUT);
@@ -150,36 +126,25 @@ void loop()
     Serial.println("File Created");
   }
   
-  // --- Clear the input buffer - we haven't asked for anything yet ---
-  Serial.println("Clearing input buffer"); 
-  while(mySerial.available()>0)
-  {
-    incomingbyte=mySerial.read();
-  }
- 
-  Serial.println("Sending Reset and clearing buffer until we issue take picture command");   
+  Serial.println("Sending Reset command");   
   SendResetCmd();
-  while(mySerial.available()>0)
-  {
-    incomingbyte=mySerial.read();
-  }
 
     Serial.println("Taking Picture in 2.5 seconds... Say Cheese!");
-     delay(2500);                               //After reset, wait 2-3 second to send take picture command
+     delay(2500);    //After reset, wait 2-3 second to send take picture command
      
      // --- Clear the input buffer - we haven't asked for anything yet ---
       Serial.println("Clearing input buffer"); 
-      while(mySerial.available()>0)
+      while(Serial2.available()>0)
       {
-        incomingbyte=mySerial.read();
+        incomingbyte=Serial2.read();
       }
          
      Serial.println("Sending Take Photo Command");  
      SendTakePhotoCmd();
      // They should respond with 76 00 36 00 00
-     while(mySerial.available()>0)
+     while(Serial2.available()>0)
       {
-        incomingbyte=mySerial.read();
+        incomingbyte=Serial2.read();
       }   
 
 
@@ -192,13 +157,13 @@ void loop()
       // Returns: 76 00 34 00 04 00 00 XH XL
       // Where XH XL is the length of the picture file, MSB in the front and LSB in the end.
       i=0;
-      while(mySerial.available()<9) // wait for 9 bytes
+      while(Serial2.available()<9) // wait for 9 bytes
       {
       }
 
-      while(mySerial.available()>0) // Read the serial buffer contents
+      while(Serial2.available()>0) // Read the serial buffer contents
       {
-        incomingbyte=mySerial.read();
+        incomingbyte=Serial2.read();
         sizeMessage[i] = incomingbyte;
         i++;
       }  
@@ -224,9 +189,9 @@ void loop()
  
         // Sometimes there might be gook in the buffer after the last packet and before
         // we ask it for more data... Ignore that.
-        while(mySerial.available() > 0) 
+        while(Serial2.available() > 0) 
         {
-          incomingbyte=mySerial.read();
+          incomingbyte=Serial2.read();
         }  
         
         
@@ -241,9 +206,9 @@ void loop()
           // 5 Byte postamble (76 00 32 00 00)       
           while(i < 42)    // Read 42 bytes in from serial buffer
           {                  
-            while(mySerial.available() > 0)
+            while(Serial2.available() > 0)
             {      
-              incomingbyte = mySerial.read();
+              incomingbyte = Serial2.read();
               packet[i] = incomingbyte;
               i++;
             }
@@ -321,27 +286,68 @@ void loop()
 
 
 
-
 //Send Reset command
-void SendResetCmd()
+boolean SendResetCmd()
 {
+     // Dumps the camera input buffer, issues a reset command, and looks for the response
+     // Returns true if we received the expected response
      // As of Arduino 1.0 the 'BYTE' keyword is no longer supported.
      // Please use Serial.write() instead.
      // we must cast to (byte) to tell the compiler how to interpret these ZERO values
      // can use (byte) but it is recommended to use (uint8_t)
      // We Send: 65 00 26 00
      // It Returns: 76 00 26 00
+     //              v    &
 
       // First, flush the buffer
-      //dumpInputBuffer();
+      dumpCameraInput();
 
-      mySerial.write(0x56);
-      mySerial.write((uint8_t)0x00);
-      mySerial.write(0x26);
-      mySerial.write((uint8_t)0x00);
-                
+      Serial2.write(0x56);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write(0x26);
+      Serial2.write((uint8_t)0x00);
+
+   startWaitTime = millis();
+    i = 0;
+    while(i <= 4 && (millis()-startWaitTime < deadManTimer))
+    {
+      if (Serial2.available() > 0) {
+        incomingbyte=Serial2.read();
+        responseMessage[i] = incomingbyte;
+        //Serial.print(responseMessage[i], HEX);
+        Serial.write(responseMessage[i]);
+        if (incomingbyte == 0x0A)
+          Serial.println();
+        else {
+          //Serial.print(" ");
+        }
+        i++;
+      }
+    }
+    
+    if (responseMessage[0] == 0x76 && responseMessage[2] == 0x26) {
+    Serial.println("Camera has been reset");
+    return true;
+    }
+    else
+    {
+      Serial.println("Warning: Expected reset response not found");
+      return false;
+    }           
 }
 
+void dumpCameraInput()
+{
+  // Use this before issuing a command to be sure the buffer is empty.
+  Serial.print("Dumping...");
+  while(Serial2.available() > 0) 
+     {
+        incomingbyte=Serial2.read();
+        Serial.write(incomingbyte);
+      }  
+  Serial.println("... END DUMPING");
+  
+}
 
 
 //Send take picture command
@@ -351,11 +357,11 @@ void SendTakePhotoCmd()
      // Response: 76 00 36 00 00  (5 Bytes)
      
       // Send the take picture command
-      mySerial.write(0x56);
-      mySerial.write((uint8_t)0x00);
-      mySerial.write(0x36);
-      mySerial.write(0x01);
-      mySerial.write((uint8_t)0x00);  
+      Serial2.write(0x56);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write(0x36);
+      Serial2.write(0x01);
+      Serial2.write((uint8_t)0x00);  
         
 }
 
@@ -363,11 +369,11 @@ void SendTakePhotoCmd()
 // Asks the camera for the size of the image it has taken.
 void GetImageSize() 
 { 
-  mySerial.write(0x56); 
-  mySerial.write(byte(0x00)); 
-  mySerial.write(0x34); 
-  mySerial.write(0x01); 
-  mySerial.write(byte(0x00)); 
+  Serial2.write(0x56); 
+  Serial2.write(byte(0x00)); 
+  Serial2.write(0x34); 
+  Serial2.write(0x01); 
+  Serial2.write(byte(0x00)); 
 }
 
 
@@ -377,29 +383,29 @@ void SendReadDataCmd()
       MH=a/0x100;  // divide by 0x100 (256 Decimal)
       ML=a%0x100;  // Modulus of that division
 
-      mySerial.write(0x56);
-      mySerial.write((uint8_t)0x00);
-      mySerial.write(0x32);
-      mySerial.write(0x0c);
-      mySerial.write((uint8_t)0x00); 
-      mySerial.write(0x0a);
-      mySerial.write((uint8_t)0x00);
-      mySerial.write((uint8_t)0x00);
+      Serial2.write(0x56);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write(0x32);
+      Serial2.write(0x0c);
+      Serial2.write((uint8_t)0x00); 
+      Serial2.write(0x0a);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write((uint8_t)0x00);
 
       // This is the "Init Address" from which we want to read
-      mySerial.write(MH);
-      mySerial.write(ML);
+      Serial2.write(MH);
+      Serial2.write(ML);
       
-      mySerial.write((uint8_t)0x00);
-      mySerial.write((uint8_t)0x00);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write((uint8_t)0x00);
 
       // This is the "Data Length" (KK KK)  In our case 0x20 = 32 Bytes
-      mySerial.write((uint8_t)0x00);
-      mySerial.write(0x20);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write(0x20);
       
       // This is the "Spacing Interval" we want which is recommended to be small such as 00 0A
-      mySerial.write((uint8_t)0x00);  
-      mySerial.write(0x0a);
+      Serial2.write((uint8_t)0x00);  
+      Serial2.write(0x0a);
 
       // Each time we Read Data, increase the starting address by 0x20 (32 Decimal)...
       // This is our buffer size.
@@ -411,11 +417,11 @@ void SendReadDataCmd()
 void SendStopTakingPicturesCmd()
 { // Tells the damn camera to stop taking pictures
   // It should respond with: 76 00 36 00 00 (FIVE bytes)
-      mySerial.write(0x56);
-      mySerial.write((uint8_t)0x00);
-      mySerial.write(0x36);
-      mySerial.write(0x01);
-      mySerial.write(0x03);    
+      Serial2.write(0x56);
+      Serial2.write((uint8_t)0x00);
+      Serial2.write(0x36);
+      Serial2.write(0x01);
+      Serial2.write(0x03);    
 
 }
 
