@@ -295,33 +295,7 @@ boolean SendResetCmd()
       Serial2.write(0x26);
       Serial2.write((uint8_t)0x00);
 
-   startWaitTime = millis();
-    i = 0;
-    while(i <= 4 && (millis()-startWaitTime < deadManTimer))
-    {
-      if (Serial2.available() > 0) {
-        incomingbyte=Serial2.read();
-        responseMessage[i] = incomingbyte;
-        //Serial.print(responseMessage[i], HEX);
-        Serial.write(responseMessage[i]);
-        if (incomingbyte == 0x0A)
-          Serial.println();
-        else {
-          //Serial.print(" ");
-        }
-        i++;
-      }
-    }
-    
-    if (responseMessage[0] == 0x76 && responseMessage[2] == 0x26) {
-    Serial.println("Camera has been reset");
-    return true;
-    }
-    else
-    {
-      Serial.println("Warning: Expected reset response not found");
-      return false;
-    }           
+      return successIfContains(0x76, 0, 0x26, 2);
 }
 
 void dumpCameraInput(boolean verbose)
@@ -329,20 +303,21 @@ void dumpCameraInput(boolean verbose)
   // Use this before issuing a command to be sure the buffer is empty.
   if (verbose == true)
     Serial.print("Dumping...");
+    
   while(Serial2.available() > 0) 
      {
         incomingbyte=Serial2.read();
         if (verbose == true)
           Serial.write(incomingbyte);
       }  
+      
   if (verbose == true)
     Serial.println("... END DUMPING");
   
 }
 
 
-//Send take picture command
-// Just tells the camera to take a picture, doesn't send the data to us.
+//  Send take picture command. Tells the camera to take a picture, and analyzes the response
 boolean SendTakePhotoCmd()
 {    // Send: 56 00 36 01 00
      // Response: 76 00 36 00 00  (5 Bytes:  v  6  )
@@ -356,9 +331,18 @@ boolean SendTakePhotoCmd()
       Serial2.write(0x01);
       Serial2.write((uint8_t)0x00);  
       
-       startWaitTime = millis();
+      return successIfContains(0x76, 0, 0x36, 2);
+        
+}
+
+
+boolean successIfContains(byte firstValue, int firstPos, byte secondValue, int secondPos) {
+ // Use this to DRY up our response checking loops
+ // You must give us two bytes and their positions (0-start).  We'll look
+ // in Serial2's input for them (as long as deadManTimer) and tell you if we received them or not
+    startWaitTime = millis();
     i = 0;
-    while(i <= 4 && (millis()-startWaitTime < deadManTimer))
+    while(i <= secondPos && (millis()-startWaitTime < deadManTimer))
     {
       if (Serial2.available() > 0) {
         incomingbyte=Serial2.read();
@@ -374,17 +358,19 @@ boolean SendTakePhotoCmd()
       }
     }
     
-    if (responseMessage[0] == 0x76 && responseMessage[2] == 0x36) {
-    Serial.println("Take Picture Command Sent");
+    if (responseMessage[firstPos] == firstValue && responseMessage[secondPos] == secondValue) {
+    Serial.println("Good Response");
     return true;
     }
     else
     {
-      Serial.println("Warning: Expected Take Picture response not found");
+      Serial.println("Warning: Expected response not found");
       return false;
     }           
         
+ 
 }
+
 
 
 // Asks the camera for the size of the image it has taken.
