@@ -464,9 +464,10 @@ void loop()
           Serial.print("FirstReceived: ");
           Serial.println(firstReceived);
           
-          if (strstr(firstReceived, "201") != NULL) {
+          if (strstr(firstReceived, "201") != NULL  || strstr(firstReceived, "302") != NULL) {
             // Successful Transfer!
-            Serial.println("201 Success");
+            // I believe we're getting the 302 moved when we send the same filename, so that is OK too
+            Serial.println("201 Success or 302 Moved");
             
             // Delete the file from our local SD card
             SD.remove(dataFile.name());
