@@ -523,8 +523,12 @@ void loop()
       char charBuf[11] = "OAP_01.JPG";
       
       // Make an ascii representation of this number and jam it in the filename
-      // TODO: Need to handle two-digit and three-digit numbers as well!!!
-      charBuf[5] = pictureTaken + 48;
+      // pictureTaken / 10 is the integer number of "tens" in the number
+      //  (9/10 = 0, 10/10 = 1, 11/10 = 1, ...)
+      // Left digit is simply the number of tens (zero if < 10)
+      charBuf[4] = (pictureTaken / 10) + 48;
+      // Right digit alone... Just subtract the number of tens * 10
+      charBuf[5] = (pictureTaken - ((pictureTaken / 10)*10)) + 48;
       
       Serial.println(charBuf);
       
@@ -639,6 +643,7 @@ void loop()
               else 
               {
                 Serial.println("FILE ERROR - ABORTING PICTURE");
+                dataFile.close();
                 // It will never recover from this error, so just bail on this picture
                 EndFlag = 1;
               }
@@ -649,6 +654,9 @@ void loop()
                 Serial.println("File closed");
                 EndFlag = 1;
                 pictureTaken++;
+                // After 99 we'll go back to zero
+                if (pictureTaken > 99)
+                  pictureTaken = 0;
               }
                
                // If we got this far, we are still good to continue processing this packet
@@ -683,7 +691,7 @@ void loop()
 
   // Wait a while, then do it again!
   Serial.println("WAITING for next loop");
-  delay( 10000 );
+  delay( 2000 );
   
   
 }  // End of Loop
