@@ -15,7 +15,7 @@
     214     sensor[key]"
     227     517c070d8xxxxxxxxxxxxxxxxxxxxe801b424d27      <--- Replace this with YOUR www.oneassetplace.com security key!!!
     268     reading[raw]"
-    282     {"5":"image"}
+    282     {"1":"image"}     <--- Replace the "1" with your "Sensor Input Seq"!!!!
     296     reading[image]"; filename="
     324     Content-Type: image/jpeg
     349     Connection: close
@@ -98,6 +98,7 @@
 #define WayTooLong 1000
 
 const int maxToReceive = 20;
+const int asciiZeroBase = 48;
 boolean lastConnected = false;  // Keep track of whether or not we connected last time
 boolean tookPictureLastTime = false;  // The last time through the loop, did we take a picture?
 
@@ -320,9 +321,9 @@ void loop()
           writeNtarrFromEEPROM(155, false);
           // Send reading[sensor_id]=
           writeNtarrFromEEPROM(194, true);
-          // Send 1 (the reading) with a CR before it
+          // Send the "Sensor ID" with a CR before it
           client.println();
-          client.println("1");
+          client.println(sensorID);
 
           // Send -- + boundary
           client.print("--");
@@ -342,7 +343,7 @@ void loop()
           writeNtarrFromEEPROM(155, false);
           // Send reading[raw]"
           writeNtarrFromEEPROM(268, true);
-          // Send {"5":"image"} with a CR before it
+          // Send {"sensorinputseq":"image"} with a CR before it
           client.println();
           writeNtarrFromEEPROM(282, true);
 
@@ -471,10 +472,7 @@ void loop()
             SD.remove(dataFile.name());
           }
           
-            // Record that we sent a file.  We really only want to send one per loop so
-            // We can alternate between taking pictures and sending files.
-        
-          // Record our status (which really is always going to be "disconnected"
+           // Record our status (which really is always going to be "disconnected"
           lastConnected = client.connected();
           
           
@@ -526,9 +524,9 @@ void loop()
       // pictureTaken / 10 is the integer number of "tens" in the number
       //  (9/10 = 0, 10/10 = 1, 11/10 = 1, ...)
       // Left digit is simply the number of tens (zero if < 10)
-      charBuf[4] = (pictureTaken / 10) + 48;
+      charBuf[4] = (pictureTaken / 10) + asciiZeroBase;
       // Right digit alone... Just subtract the number of tens * 10
-      charBuf[5] = (pictureTaken - ((pictureTaken / 10)*10)) + 48;
+      charBuf[5] = (pictureTaken - ((pictureTaken / 10)*10)) + asciiZeroBase;
       
       Serial.println(charBuf);
       
