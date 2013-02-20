@@ -71,6 +71,7 @@
     2013-02-01 - DECj: Modifying for MEGA board.
     2013-02-05 - DECj: Finished MEGA board testing in the other project.  Continuing mods here.  No longer using SoftwareSerial.
     2013-02-04 - DECj: Successful multi-picture MEGA run!
+    2013-02-20 - DECj: Attempting to change from Arduino's SD Library to SdFat.  SdFat supposedly has fewer memory leaks and is faster.
     
     Shout Outs:
       To "salacain" (Arduino forum) of Ashburn, VA for posting some code that was a starting point for grabbing images from the camera 
@@ -86,7 +87,8 @@
 #include <Ethernet.h>
 #include "Credentials.h"
 #include <SPI.h>
-#include <SD.h>
+//#include <SD.h>
+#include <SdFat.h>
 #include <EEPROM.h>
 
 // Name all of our pins
@@ -98,9 +100,16 @@
 #define WayTooLong 1000
 
 const int maxToReceive = 20;
-const int asciiZeroBase = 48;
 boolean lastConnected = false;  // Keep track of whether or not we connected last time
 boolean tookPictureLastTime = false;  // The last time through the loop, did we take a picture?
+const int packetBuffSize = 42;  // This is our read/write buffer size from the camera to the SD card
+const int innnerDataBodyStart = 5;  // This is the START of our chunk of the buffer that actually contains image data
+const int innerDataBodyEnd = 37;  // This is the END of our chunk of the buffer that actually contains image data
+
+// Test with reduced SPI speed for breadboards.
+// Change spiSpeed to SPI_FULL_SPEED for better performance
+// Use SPI_QUARTER_SPEED for even slower SPI bus speed
+const uint8_t spiSpeed = SPI_HALF_SPEED;
 
 // WARNING!  If you get into larger image sizes, this might need to be unsigned long!
 unsigned int startConnectionTime;
@@ -133,7 +142,12 @@ long a=0x0000;
 
 uint8_t MH,ML;
 
-File dataFile;  // NOTE: dataFile is shared between both the picture taking and picture sending routines
+//File dataFile;  // NOTE: dataFile is shared between both the picture taking and picture sending routines
+// file system object
+SdFat sd;
+SdFile dataFile;  // NOTE: dataFile is shared between both the picture taking and picture sending routines
+SdFile writePicFile;
+
 
 EthernetClient client;  // Setup a client to connect to RAILS server
 
@@ -168,11 +182,11 @@ void setup() {
   */
   pinMode(sdCardControlPin, OUTPUT);
 
-  if (!SD.begin(sdCardControlPin)) {
+  if (!sd.begin(sdCardControlPin, spiSpeed)) {
     Serial.println("SD Card Fail"); // don't do anything more:
     return;
   }
-
+  
 
   // start the Ethernet connection:
   if (Ethernet.begin(mac) == 0) {
@@ -221,192 +235,190 @@ void loop()
           A) Send picture to OneAssetPlace via Ethernet shield
           B) Delete picture locally
     */
-    File root;
+    //    File root;
+    SdFile root;
     
     // Any pictures locally to send?
+    // 2013-02-20 - DECj: Trying a new technique here that should be faster and easier than scanning
+    // through the directory... We KNOW our files will be OAP_00.JPG through OAP_99.JPG so just
+    // loop through that array and stop if you find one.  Idea was from AnalogLogger example code.
     Serial.println("Checking for Pic Files");
-    root = SD.open("/");
-    root.rewindDirectory();  // Need to ensure that each time through we start at the beginning.
-    dataFile =  root.openNextFile();
-    // NOTE: Only filenames that start with "O" (Capital Letter O) will be read!
-    while ( dataFile ) {
-      Serial.println("Traversing Pic Files");
-      
-      if (!dataFile.isDirectory() && dataFile.name()[0] == 'O') {
-           
-        char firstReceived[maxToReceive];  // To hold the first X characters received from http
-           
-        // This is a file we should process
-        // We only deal with images in the root folder.  If you want to save them permanently, move them down a level
-        // This is a file that needs to be sent to the server, then deleted
-           
-        Serial.print("File:");
-        Serial.println(dataFile.name());
+    
+    char name[] = "OAP_00.JPG";
 
-         // We are building the string manually, so let's add a terminator at the end no matter what
-          firstReceived[maxToReceive] = '\0';
+    for (uint8_t i = 0; i < 100; i++) {
+      name[4] = i/10 + '0';
+      name[5] = i%10 + '0';
+      if (sd.exists(name)) {
+        // We have an image file that needs to be sent to One Asset Place  
+        if (dataFile.open(name, O_READ)) {
+            
+          Serial.print("File:");
+          Serial.println(name);
+  
+          char firstReceived[maxToReceive]; // To hold the first X characters received from HTTP
+  
+           // We are building the string manually, so let's add a terminator at the end no matter what
+           firstReceived[maxToReceive] = '\0';
 
-        // REMEMBER!
-        // A) sprintf does not work reliably in Arduino!
-        // B) strcpy is not an APPEND it is a force-over copy!!
-        // C) You are responsible for buffer size, etc!  If you overwrite buffers, expect extremely odd results including constant
-        //    resetting of your Arduino!
-        //strcpy(postData, ""); // Empty our array of characters terminated with \0
-        //strcpy(postData, restTags);
-        // Now APPEND the picture data to the postData string...
-        //strcat(postData, dataFile.name());
-        //strcat(postData, "\"}:");      
-        //Serial.println(postData);
-      
-        theSize = dataFile.size();
-        Serial.print("Size:");
-        Serial.println(theSize);
+          // REMEMBER!
+          // A) sprintf does not work reliably in Arduino!
+          // B) strcpy is not an APPEND it is a force-over copy!!
+          // C) You are responsible for buffer size, etc!  If you overwrite buffers, expect extremely odd results including constant
+          //    resetting of your Arduino!
+          //strcpy(postData, ""); // Empty our array of characters terminated with \0
+          //strcpy(postData, restTags);
+          // Now APPEND the picture data to the postData string...
+          //strcat(postData, dataFile.name());
+          //strcat(postData, "\"}:");      
+          //Serial.println(postData);
         
-        // Calculate our post length which is everything we'll be sending in the BODY of the post
-        // Don't forget to account for the CR/LF!!
-        // Using WRITE, the value for our 47,560 file was 48119.  That is 559 of overhead:
-        // PostBody (My calculations of text) is 551
-        // filename is (in this case) 9
-        //postLength = 48119;
-        // By my calculations, we sent them 48118 of data, but it seems happy with this.
-        // TODO:  Might want to play with a few other values (549, 550, 551) to see if it makes a difference.
-        postLength = 550 + strlen(dataFile.name()) + theSize;
-        
-        
-        // if there's incoming data from the net connection.
-        // send it out the serial port.  This is for debugging
-        // purposes only:
-        while (client.available() > 0) {
-          char c = client.read();
-          //Serial.print(c);
-        }
-        
-        // if there's no net connection, but there was one last time
-        // through the loop, then stop the client:
-        if (!client.connected() && lastConnected) {
-          Serial.println("Stopping prior connection");
-          client.stop();
-        }
-      
-      
-        // --- If we got this far, the Ethernet shield is powered up and we are on the network ---
-        Serial.println("Shields Up, about to POST");  
-        // if you get a connection, report back via serial:
-        if (client.connect(serverName, serverPort)) 
-        {
-          //Serial.println( data );
-          // Remember, POST is very picky about newlines and dashes!!.  Note the difference between println() and print()
-          // use "client." for real, "Serial." for testing...
+          theSize = dataFile.fileSize();
+          Serial.print("Size:");
+          Serial.println(theSize);
           
-          // Send "POST /readings HTTP/1.1"
-          writeNtarrFromEEPROM(0, true);
-          // Send "Host: www.oneassetplace.com"
-          writeNtarrFromEEPROM(110, true);
-          // Send "Content-Type: multipart/form-data; boundary=<boundary>
-          writeNtarrFromEEPROM(24, false);
-          writeNtarrFromEEPROM(69, true);
-          // Send "Content-Length: "
-          writeNtarrFromEEPROM(138, false);
-          client.println( postLength );
-          // Send "Connection: close"
-          writeNtarrFromEEPROM(349, true);
-
-          // Content-Length we send is from AFTER "Connection: close" until the end (?)
-          client.println();
+          // Calculate our post length which is everything we'll be sending in the BODY of the post
+          // Don't forget to account for the CR/LF!!
+          // Using WRITE, the value for our 47,560 file was 48119.  That is 559 of overhead:
+          // PostBody (My calculations of text) is 551
+          // filename is (in this case) 9
+          //postLength = 48119;
+          // By my calculations, we sent them 48118 of data, but it seems happy with this.
+          // TODO:  Might want to play with a few other values (549, 550, 551) to see if it makes a difference.
+          postLength = 550 + strlen(name) + theSize;
           
-          // Send -- + boundary
-          client.print("--");
-          writeNtarrFromEEPROM(69, true);
-          // Send Content-Disposition: form-data; name="
-          writeNtarrFromEEPROM(155, false);
-          // Send reading[sensor_id]=
-          writeNtarrFromEEPROM(194, true);
-          // Send the "Sensor ID" with a CR before it
-          client.println();
-          client.println(sensorID);
-
-          // Send -- + boundary
-          client.print("--");
-          writeNtarrFromEEPROM(69, true);
-          // Send Content-Disposition: form-data; name="
-          writeNtarrFromEEPROM(155, false);
-          // Send sensor[key]"
-          writeNtarrFromEEPROM(214, true);
-          // Send (the key) with a CR before it
-          client.println();
-          writeNtarrFromEEPROM(227, true);
-
-          // Send -- + boundary
-          client.print("--");
-          writeNtarrFromEEPROM(69, true);
-          // Send Content-Disposition: form-data; name="
-          writeNtarrFromEEPROM(155, false);
-          // Send reading[raw]"
-          writeNtarrFromEEPROM(268, true);
-          // Send {"sensorinputseq":"image"} with a CR before it
-          client.println();
-          writeNtarrFromEEPROM(282, true);
-
-          // Send -- + boundary
-          client.print("--");
-          writeNtarrFromEEPROM(69, true);
-          // Send Content-Disposition: form-data; name="
-          writeNtarrFromEEPROM(155, false);
-          // Send reading[image]"; filename="
-          writeNtarrFromEEPROM(296, false);
-          // Send the filename and an end quote
-          client.print(dataFile.name());
-          client.println("\"");
-          
-          // Send Content-Type: image/jpeg
-          writeNtarrFromEEPROM(324, true);
-          client.println();
-          // Now LOOP through the entire JPEG image file sending each byte
-
-          // Todo: More graceful handling if server resets connection...
-          // && client.connected()
-          fileBytesSent = 0;
-
-          // Warning!  dataFile.read does not work as documented!  Must use dataFile.available to check for more data
-          while (dataFile.available() > 0 ) {
-            nextByte = dataFile.read();
-            // Careful with how this information is formatted.  HEX doesn't seem correct
-            // You probably need a WRITE not a PRINT here!
-            client.write(nextByte);
-            fileBytesSent++;
+          // if there's incoming data from the net connection.
+          // send it out the serial port.  This is for debugging
+          // purposes only:
+          while (client.available() > 0) {
+            char c = client.read();
+            //Serial.print(c);
           }
-
-          if (client.connected() == true) {
-            // END of looping through the file 
+          
+          // if there's no net connection, but there was one last time
+          // through the loop, then stop the client:
+          if (!client.connected() && lastConnected) {
+            Serial.println("Stopping prior connection");
+            client.stop();
+          }
+        
+          // --- If we got this far, the Ethernet shield is powered up and we are on the network ---
+          Serial.println("Shields Up, about to POST");  
+          // if you get a connection, report back via serial:
+          if (client.connect(serverName, serverPort)) {
+            //Serial.println( data );
+            // Remember, POST is very picky about newlines and dashes!!.  Note the difference between println() and print()
+            // use "client." for real, "Serial." for testing...
+            
+            // Send "POST /readings HTTP/1.1"
+            writeNtarrFromEEPROM(0, true);
+            // Send "Host: www.oneassetplace.com"
+            writeNtarrFromEEPROM(110, true);
+            // Send "Content-Type: multipart/form-data; boundary=<boundary>
+            writeNtarrFromEEPROM(24, false);
+            writeNtarrFromEEPROM(69, true);
+            // Send "Content-Length: "
+            writeNtarrFromEEPROM(138, false);
+            client.println( postLength );
+            // Send "Connection: close"
+            writeNtarrFromEEPROM(349, true);
+  
+            // Content-Length we send is from AFTER "Connection: close" until the end (?)
             client.println();
-            // Send -- + boundary + --
+            
+            // Send -- + boundary
             client.print("--");
-            writeNtarrFromEEPROM(69, false);
-            client.print("--");
+            writeNtarrFromEEPROM(69, true);
+            // Send Content-Disposition: form-data; name="
+            writeNtarrFromEEPROM(155, false);
+            // Send reading[sensor_id]=
+            writeNtarrFromEEPROM(194, true);
+            // Send the "Sensor ID" with a CR before it
             client.println();
-          }
-          else
-          {
-            // Unexpected:  Client was not connected at end of file sending, couldn't send final boundary
-            Serial.println("Error: Client not connected at end");  
-          }
+            client.println(sensorID);
+  
+            // Send -- + boundary
+            client.print("--");
+            writeNtarrFromEEPROM(69, true);
+            // Send Content-Disposition: form-data; name="
+            writeNtarrFromEEPROM(155, false);
+            // Send sensor[key]"
+            writeNtarrFromEEPROM(214, true);
+            // Send (the key) with a CR before it
+            client.println();
+            writeNtarrFromEEPROM(227, true);
+  
+            // Send -- + boundary
+            client.print("--");
+            writeNtarrFromEEPROM(69, true);
+            // Send Content-Disposition: form-data; name="
+            writeNtarrFromEEPROM(155, false);
+            // Send reading[raw]"
+            writeNtarrFromEEPROM(268, true);
+            // Send {"sensorinputseq":"image"} with a CR before it
+            client.println();
+            writeNtarrFromEEPROM(282, true);
+  
+            // Send -- + boundary
+            client.print("--");
+            writeNtarrFromEEPROM(69, true);
+            // Send Content-Disposition: form-data; name="
+            writeNtarrFromEEPROM(155, false);
+            // Send reading[image]"; filename="
+            writeNtarrFromEEPROM(296, false);
+            // Send the filename and an end quote
+            client.print(name);
+            client.println("\"");
             
-          // CLOSE the file
-          dataFile.close();
-          Serial.println("Pic file closed"); 
-            
-          Serial.print("Sent:");
-          Serial.println(fileBytesSent);
-            
-          }  // END if client.connect
-          else {
-            // Failed to connect to the Ethernet Board
-            // 01/03/2013 - Having issues where it stops sending, yet the C code seems to be looping just fine
-            // (for instance, the LED's properly go on/off as doors are opened / closed)
-            // Will try resetting the client here.  Also will "flash" the LED's to let you know this occurred
-            Serial.println("Error: Ethernet Connect Fail");
-          }
-      
+            // Send Content-Type: image/jpeg
+            writeNtarrFromEEPROM(324, true);
+            client.println();
+            // Now LOOP through the entire JPEG image file sending each byte
+  
+            // Todo: More graceful handling if server resets connection...
+            // && client.connected()
+            fileBytesSent = 0;
+  
+            // Warning! (SD) dataFile.read did not work as documented!  Must use dataFile.available to check for more data
+            while (dataFile.available() > 0 ) {
+              nextByte = dataFile.read();
+              // Careful with how this information is formatted.  HEX doesn't seem correct
+              // You probably need a WRITE not a PRINT here!
+              client.write(nextByte);
+              fileBytesSent++;
+            }
+  
+            // CLOSE the file
+            dataFile.close();
+            Serial.println("Pic file closed"); 
+  
+            if (client.connected() == true) {
+              // END of looping through the file 
+              client.println();
+              // Send -- + boundary + --
+              client.print("--");
+              writeNtarrFromEEPROM(69, false);
+              client.print("--");
+              client.println();
+            }
+            else
+            {
+              // Unexpected:  Client was not connected at end of file sending, couldn't send final boundary
+              Serial.println("Error: Client not connected at end");  
+            }
+              
+            Serial.print("Sent:");
+            Serial.println(fileBytesSent);
+              
+            }  // END if able to connect to Ethernet board
+            else {
+              // Failed to connect to the Ethernet Board
+              // 01/03/2013 - Having issues where it stops sending, yet the C code seems to be looping just fine
+              // (for instance, the LED's properly go on/off as doors are opened / closed)
+              // Will try resetting the client here.  Also will "flash" the LED's to let you know this occurred
+              Serial.println("Error: Ethernet Connect Fail");
+            }
+        
           // NORMALLY what happens in this scenario, is the SERVER closes the connection, which will
           // exit out of this loop after you've gathered all the response data...  If, for some reason,
           // we get no response (and the connection just hangs) the deadManTimer should eventually kick
@@ -419,7 +431,7 @@ void loop()
             // TODO: I think you should also check client.connected again because I think we're waiting for the timeout all the time
             while ((millis() - startWaitTime) < deadManTimer) {
            
-             // Handle the data coming back! .available returns the number of bytes available for reading
+              // Handle the data coming back! .available returns the number of bytes available for reading
               while (client.available() > 0) {
                 char c = client.read();
                   /* This is EXACTLY what we get back from a successful response:
@@ -442,57 +454,52 @@ void loop()
                   firstReceived[received] = c;
                   received++;
                 }
-                
-                //Serial.print(c);
+                  
+                  //Serial.print(c);
               }
-              
+                
              // Give the server a bit of time to respond
              delay (10);
+             }  // END of deadman timer waiting for response
+              
+            }  // END if client still connected
+            else
+            {
+              // We should have been still connected but we were not - could not process response.
+              Serial.println("Error: Could not process response");
             }
-          }  // END if client still connected
-          else
-          {
-            // We should have been still connected but we were not - could not process response.
-            Serial.println("Error: Could not process response");
-          }
-      
-          // At this point we've either finished naturally or we've given up, so stop the client
-          Serial.println("Stopping client");
-          client.stop();
-          
-          // What was the first chunk of our received data?
-          Serial.print("FirstReceived: ");
-          Serial.println(firstReceived);
-          
-          if (strstr(firstReceived, "201") != NULL  || strstr(firstReceived, "302") != NULL) {
-            // Successful Transfer!
-            // I believe we're getting the 302 moved when we send the same filename, so that is OK too
-            Serial.println("201 Success or 302 Moved");
-            
-            // Delete the file from our local SD card
-            SD.remove(dataFile.name());
-          }
-          
-           // Record our status (which really is always going to be "disconnected"
-          lastConnected = client.connected();
-          
-          
-          }  // end while datafile()
-          //  ===============================  END of code to SEND a single picture file to the server  ===================
         
-          // Now get the next file, if there is one
-          Serial.println("Another Pic File?");
-          dataFile = root.openNextFile();
-       }  // END While datafile 
+            // At this point we've either finished naturally or we've given up, so stop the client
+            Serial.println("Stopping client");
+            client.stop();
+            
+            // What was the first chunk of our received data?
+            Serial.print("FirstReceived: ");
+            Serial.println(firstReceived);
+            
+            if (strstr(firstReceived, "201") != NULL  || strstr(firstReceived, "302") != NULL) {
+              // Successful Transfer!
+              // I believe we're getting the 302 moved when we send the same filename, so that is OK too
+              Serial.println("201 Success or 302 Moved");
+              
+              // Delete the file from our local SD card
+              sd.remove(name);
+            }
+            
+            // Record our status (which really is always going to be "disconnected"
+            lastConnected = client.connected();
+          } // end if the data file is open
+        }  // end if file exists
+        //  ===============================  END of code to SEND a single picture file to the server  ===================
+            
+      }  // END for each possible filename
+
+      Serial.println("Finished traversing pic files");
        
-       Serial.println("Finished traversing pic files");
-       // Not sure if a close is needed here, try it
-       dataFile.close();
-       
-       // Record the fact that, this time through, we did NOT take a picture
-       tookPictureLastTime = false;
-    
-  }
+      // Record the fact that, this time through, we did NOT take a picture
+      tookPictureLastTime = false;
+      
+  } 
   else
   {
     // ++++++++++++++++++++++++++++++++++++++++++++++++++  BEGINNING of PICTURE PORTION  +++++++++++++++++++++++++++++++++++++++
@@ -519,26 +526,29 @@ void loop()
       //      filename.toCharArray(charBuf, strlen);       // convert the String filename to character array
       
       //Serial.println(filename);
-      char charBuf[11] = "OAP_01.JPG";
+      char charBuf[11] = "OAP_00.JPG";
       
       // Make an ascii representation of this number and jam it in the filename
-      // pictureTaken / 10 is the integer number of "tens" in the number
-      //  (9/10 = 0, 10/10 = 1, 11/10 = 1, ...)
-      // Left digit is simply the number of tens (zero if < 10)
-      charBuf[4] = (pictureTaken / 10) + asciiZeroBase;
-      // Right digit alone... Just subtract the number of tens * 10
-      charBuf[5] = (pictureTaken - ((pictureTaken / 10)*10)) + asciiZeroBase;
-      
+      charBuf[4] = pictureTaken/10 + '0';
+      charBuf[5] = pictureTaken%10 + '0';
+    
       Serial.println(charBuf);
       
-      if (SD.exists(charBuf) == true) {
-        // The file exists already on the SD card, delete it.
-        SD.remove(charBuf);
-        Serial.println("Removed file locally");
+      if(sd.exists(charBuf)) {
+        // The file exists... Remove it
+        sd.remove(charBuf);
+        Serial.println("Removed existing file");
       }
-      dataFile = SD.open(charBuf, FILE_WRITE);     // Open new file on SD Card
-      if (dataFile) {
+
+      // Open the file
+      writePicFile.open(charBuf, O_WRITE | O_CREAT | O_TRUNC);
+      if (writePicFile.isOpen())
+      {
         Serial.println("New file open");
+      }
+      else
+      {
+        Serial.println("ERROR: Could not open file");
       }
       
       
@@ -546,18 +556,18 @@ void loop()
       SendResetCmd();
   
       Serial.println("Taking Picture in 2.5 seconds... Say Cheese!");
-       delay(2500);    //After reset, wait 2-3 second to send take picture command
+      delay(2500);    //After reset, wait 2-3 second to send take picture command
      
-     Serial.println("Sending Take Photo Command");  
-     SendTakePhotoCmd();
+      Serial.println("Sending Take Photo Command");  
+      SendTakePhotoCmd();
   
-        Serial.println("Sending Read Image Size command");
-        delay(80);  // You MUST pause a little bit here or the camera is unhappy
-        SendGetImageSizeCommand();
-        delay(80);  // You MUST pause a little bit here or the camera is unhappy.  50 seemed to be OK for uno
-        Serial.print("Image Size: ");
-        // Returns: 76 00 34 00 04 00 00 XH XL
-        // Where XH XL is the length of the picture file, MSB in the front and LSB in the end.
+      Serial.println("Sending Read Image Size command");
+      delay(80);  // You MUST pause a little bit here or the camera is unhappy
+      SendGetImageSizeCommand();
+      delay(80);  // You MUST pause a little bit here or the camera is unhappy.  50 seemed to be OK for uno
+      Serial.print("Image Size: ");
+      // Returns: 76 00 34 00 04 00 00 XH XL
+      // Where XH XL is the length of the picture file, MSB in the front and LSB in the end.
 
         startWaitTime = millis();
         Serial.println("Waiting for image size");  // Waiting for image size response
@@ -594,7 +604,7 @@ void loop()
         
 
         // Now, Read the JPEG file content
-        byte packet[42];
+        byte packet[packetBuffSize];
         // Setup for a nice, clean reading of the packets
         a=0x0000;  // This is our buffer address!
         packetCount = 0;
@@ -611,11 +621,11 @@ void loop()
           SendReadDataCmd();
             
             i = 0;
-            // Notice we read 42 bytes from the serial buffer.  That is:
+            // Notice we read (packetBuffSize) 42 bytes from the serial buffer.  That is:
             // 5 Byte preamble (76 00 32 00 00)
             // 32 Bytes of data (that is what we asked for)
             // 5 Byte postamble (76 00 32 00 00)       
-            while(i < 42)    // Read 42 bytes in from serial buffer
+            while(i < packetBuffSize)    // Read packetBuffSize (42) bytes in from serial buffer
             {                  
               while(Serial2.available() > 0)
               {      
@@ -629,27 +639,22 @@ void loop()
              
     
             // Now, loop through the useful bytes of the data packet and write to the card
-            // We do this in a self-incremented loop from 5 to < 37 because we need to bail out 
+            // We do this in a self-incremented loop from innnerDataBodyStart (5) to < innerDataBodyEnd (37) because we need to bail out 
             // immediately when we see the end of the JPG data
-            i = 5;
-            while (!EndFlag && i < 37)     
+            i = innnerDataBodyStart;
+            int bytesWritten = 0;
+            while (!EndFlag && i < innerDataBodyEnd)     
             {
               //       Write data to packet to SD card 
-              if (dataFile) 
+              writePicFile.clearWriteError();
+             // WARNING: SdFat Library seems to have a bug with checking the error status here...
+             // It will always return 0 which, according to the docs, means an error has occurred...
+             // TODO: Reproduce and log as issue or fix.
+             writePicFile.write(packet[i]);
+
+             if((packet[i-1] == 0xFF) && (packet[i] == 0xD9))  //Check if the picture is over (a JPEG ends with FF D9)
               {
-                dataFile.write(packet[i]);
-              }
-              else 
-              {
-                Serial.println("FILE ERROR - ABORTING PICTURE");
-                dataFile.close();
-                // It will never recover from this error, so just bail on this picture
-                EndFlag = 1;
-              }
-              
-              if((packet[i-1] == 0xFF) && (packet[i] == 0xD9))  //Check if the picture is over (a JPEG ends with FF D9)
-              {
-                dataFile.close();
+                writePicFile.close();
                 Serial.println("File closed");
                 EndFlag = 1;
                 pictureTaken++;
