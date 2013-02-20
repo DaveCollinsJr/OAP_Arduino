@@ -87,7 +87,6 @@
 #include <Ethernet.h>
 #include "Credentials.h"
 #include <SPI.h>
-//#include <SD.h>
 #include <SdFat.h>
 #include <EEPROM.h>
 
@@ -102,9 +101,40 @@
 const int maxToReceive = 20;
 boolean lastConnected = false;  // Keep track of whether or not we connected last time
 boolean tookPictureLastTime = false;  // The last time through the loop, did we take a picture?
-const int packetBuffSize = 42;  // This is our read/write buffer size from the camera to the SD card
-const int innerDataBodyStart = 5;  // This is the START of our chunk of the buffer that actually contains image data
-const int innerDataBodyEnd = 37;  // This is the END of our chunk of the buffer that actually contains image data
+
+
+
+
+// =========================================================================================================
+//                            Camera specific settings
+const int preambleSize = 5;  // Number of bytes in the JPEG preamble.  Specific to the CAMERA.
+const int postambleSize = 5;  // Number of bytes in the JPEG postamble.  Specific to the CAMERA.
+
+//    ------------------------------------------------------------------------------------------
+// !!!! Careful! Original values of 32 and 0x20 are well tested !!!!!
+// Camera documentation says it must be an "integer multiple of 8".  The code, as currently written won't support a
+// value >= 256 for sure.
+const int usefulPacketSize = 32; // Number of bytes in the buffer we're asking for
+// !!!Careful with this one!  This is the number of bytes we ask for in each JPEG payload
+const byte jpegReadPacketSize = 0x20;  // This _MUST_ be the hex equivalent of usefulPacketSize!!
+//    ------------------------------------------------------------------------------------------
+
+// This is the FULL packet size from the camera (including preamble/postamble)  Was originally 42 (with 32 byte useful)
+const int fullPacketSize = preambleSize + postambleSize + usefulPacketSize;
+
+// This is the START of OUR chunk of the buffer that actually contains image data
+//      This is array position 5. 0 through 4 hold the preamble
+const int innerDataBodyStart = preambleSize;  
+// This is the END of our chunk of the buffer that actually contains image data
+//      This is array position 36.  37 through 41 hold the postamble
+const int innerDataBodyEnd = innerDataBodyStart + usefulPacketSize - 1;  
+// =========================================================================================================
+
+
+
+const int syncInterval = 20;  // Each time we've written this many chunks to the SD card, call a sync...
+
+
 
 // Test with reduced SPI speed for breadboards.
 // Change spiSpeed to SPI_FULL_SPEED for better performance
@@ -122,6 +152,7 @@ byte responseMessage[110]; // Used to hold responses
 int rc; // response counter
 int packetCount = 0;
 int stopAt = 0;
+int bytesWritten;
 
 const unsigned long deadManTimer = 6000;
 unsigned long startWaitTime;
@@ -143,11 +174,9 @@ long a=0x0000;
 
 uint8_t MH,ML;
 
-//File dataFile;  // NOTE: dataFile is shared between both the picture taking and picture sending routines
-// file system object
+// file system objects
 SdFat sd;
 SdFile dataFile;  // NOTE: dataFile is shared between both the picture taking and picture sending routines
-SdFile writePicFile;
 
 
 EthernetClient client;  // Setup a client to connect to RAILS server
@@ -543,8 +572,8 @@ void loop()
       }
 
       // Open the file
-      writePicFile.open(charBuf, O_WRITE | O_CREAT | O_TRUNC);
-      if (writePicFile.isOpen())
+      dataFile.open(charBuf, O_WRITE | O_CREAT | O_TRUNC);
+      if (dataFile.isOpen())
       {
         Serial.println("New file open");
       }
@@ -580,13 +609,14 @@ void loop()
         
         if(Serial2.available() >= 9) {
           // Assume all is well - we got an image size response
-          Serial.println("Received Image Size Response");
+          Serial.println("Received Image Size Response: ");
 
           i=0;
           while(Serial2.available() > 0 && i < 9) // Read the serial buffer contents but no more than 9
           {
              incomingbyte=Serial2.read();
              sizeMessage[i] = incomingbyte;
+             //Serial.print(sizeMessage[i]);
              i++;
           }  
           
@@ -606,8 +636,8 @@ void loop()
         
 
         // Now, Read the JPEG file content
-        byte packet[packetBuffSize];
-        byte usefulPacket[innerDataBodyEnd - innerDataBodyStart];
+        byte packet[fullPacketSize];
+        byte usefulPacket[innerDataBodyEnd - innerDataBodyStart + 1];
         // Setup for a nice, clean reading of the packets
         a=0x0000;  // This is our buffer address!
         packetCount = 0;
@@ -628,11 +658,11 @@ void loop()
           stopAt = 0;
           int numBytes = 0;
           
-          // Notice we read (packetBuffSize) 42 bytes from the serial buffer.  That is:
+          // Notice we read (fullPacketSize) 42 bytes from the serial buffer.  That is:
           // 5 Byte preamble (76 00 32 00 00)
           // 32 Bytes of data (that is what we asked for)
           // 5 Byte postamble (76 00 32 00 00)       
-          while(i < packetBuffSize)    // Read packetBuffSize (42) bytes in from serial buffer
+          while(i < fullPacketSize)    // Read fullPacketSize (42) bytes in from serial buffer
           {                  
             while(Serial2.available() > 0)
             {      
@@ -645,9 +675,10 @@ void loop()
                     // ... The rest will be filler up until the postamble
                     stopAt = u;
                   }
+                u++;
               }
               i++;
-              u++;
+              
             }
           }
   
@@ -655,24 +686,31 @@ void loop()
           packetCount++;
   
           // Now, just write the entire length to the SD card rather than one byte at a time
-          writePicFile.clearWriteError();
+          dataFile.clearWriteError();
           // WARNING: SdFat Library seems to have a bug with checking the error status here...
           // It will always return 0 which, according to the docs, means an error has occurred...
           // TODO: Reproduce and log as issue or fix.
           
           // OK There are two possibilities here:
-          // 1) stopAt == 0 : We read a full set of 32 bytes (innderDataBodyEnd - innerDataBodyStart)
+          // 1) stopAt == 0 : We read a full set of 32 bytes (innderDataBodyEnd - innerDataBodyStart + 1)
           // 2) else We only need stopAt+1 bytes
           if (stopAt == 0)
-            numBytes = (innerDataBodyEnd - innerDataBodyStart);
+            numBytes = (innerDataBodyEnd - innerDataBodyStart + 1);
           else
             numBytes = stopAt+1;
           
-          writePicFile.write(usefulPacket, numBytes);
+          bytesWritten = dataFile.write(usefulPacket, numBytes);
+
+          if (packetCount%syncInterval == 0) {
+            // Need to sync every syncInterval times...
+            //Serial.println("Syncinc");
+            dataFile.sync();
+          }
+
 
           if (stopAt != 0) {
             // This was the end of the image!
-              writePicFile.close();
+              dataFile.close();
               Serial.println("File closed");
               EndFlag = 1;
               pictureTaken++;
@@ -820,6 +858,9 @@ boolean successIfContains(byte firstValue, int firstPos, byte secondValue, int s
 // Asks the camera for the size of the image it has taken.
 void SendGetImageSizeCommand() 
 { 
+  
+  dumpCameraInput(true);
+  
   Serial2.write(0x56); 
   Serial2.write(byte(0x00)); 
   Serial2.write(0x34); 
@@ -850,17 +891,17 @@ void SendReadDataCmd()
       Serial2.write((uint8_t)0x00);
       Serial2.write((uint8_t)0x00);
 
-      // This is the "Data Length" (KK KK)  In our case 0x20 = 32 Bytes
+      // This is the "Data Length" (KK KK)  In our case jpegReadPacketSize 0x20 = 32 Bytes
       Serial2.write((uint8_t)0x00);
-      Serial2.write(0x20);
+      Serial2.write(jpegReadPacketSize);
       
       // This is the "Spacing Interval" we want which is recommended to be small such as 00 0A
       Serial2.write((uint8_t)0x00);  
       Serial2.write(0x0a);
 
-      // Each time we Read Data, increase the starting address by 0x20 (32 Decimal)...
+      // Each time we Read Data, increase the starting address by jpegReadPacketSize 0x20 (32 Decimal)...
       // This is our buffer size.
-      a += 0x20;
+      a += jpegReadPacketSize;
 }
 
 
