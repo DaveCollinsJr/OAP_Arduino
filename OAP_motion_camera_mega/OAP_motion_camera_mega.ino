@@ -103,7 +103,7 @@ const int maxToReceive = 20;
 boolean lastConnected = false;  // Keep track of whether or not we connected last time
 boolean tookPictureLastTime = false;  // The last time through the loop, did we take a picture?
 const int packetBuffSize = 42;  // This is our read/write buffer size from the camera to the SD card
-const int innnerDataBodyStart = 5;  // This is the START of our chunk of the buffer that actually contains image data
+const int innerDataBodyStart = 5;  // This is the START of our chunk of the buffer that actually contains image data
 const int innerDataBodyEnd = 37;  // This is the END of our chunk of the buffer that actually contains image data
 
 // Test with reduced SPI speed for breadboards.
@@ -121,6 +121,7 @@ byte responseMessage[110]; // Used to hold responses
 
 int rc; // response counter
 int packetCount = 0;
+int stopAt = 0;
 
 const unsigned long deadManTimer = 6000;
 unsigned long startWaitTime;
@@ -515,6 +516,7 @@ void loop()
       // Variables ONLY needed by the PICTURE side of things...
       boolean EndFlag=0;
       int i;  // Various loops
+      int u;
             
      // ----- Create image filename (sequential) -----
       Serial.println("Creating Image File");
@@ -605,6 +607,7 @@ void loop()
 
         // Now, Read the JPEG file content
         byte packet[packetBuffSize];
+        byte usefulPacket[innerDataBodyEnd - innerDataBodyStart];
         // Setup for a nice, clean reading of the packets
         a=0x0000;  // This is our buffer address!
         packetCount = 0;
@@ -620,55 +623,68 @@ void loop()
           // requested delay... 
           SendReadDataCmd();
             
-            i = 0;
-            // Notice we read (packetBuffSize) 42 bytes from the serial buffer.  That is:
-            // 5 Byte preamble (76 00 32 00 00)
-            // 32 Bytes of data (that is what we asked for)
-            // 5 Byte postamble (76 00 32 00 00)       
-            while(i < packetBuffSize)    // Read packetBuffSize (42) bytes in from serial buffer
-            {                  
-              while(Serial2.available() > 0)
-              {      
-                packet[i] = Serial2.read();
-                i++;
+          i = 0;
+          u = 0;
+          stopAt = 0;
+          int numBytes = 0;
+          
+          // Notice we read (packetBuffSize) 42 bytes from the serial buffer.  That is:
+          // 5 Byte preamble (76 00 32 00 00)
+          // 32 Bytes of data (that is what we asked for)
+          // 5 Byte postamble (76 00 32 00 00)       
+          while(i < packetBuffSize)    // Read packetBuffSize (42) bytes in from serial buffer
+          {                  
+            while(Serial2.available() > 0)
+            {      
+              packet[i] = Serial2.read();  // Save EVERYTHING in packet (for debugging)
+              if (i >= innerDataBodyStart && i <= innerDataBodyEnd && stopAt == 0) {
+                usefulPacket[u] = packet[i];  // Only image data goes in usefulPacket
+                
+                if((packet[i] == 0xD9) && (packet[i-1] == 0xFF))
+                  { // Hey! FF D9 is the END of a JPEG image, so we only need to write up to this
+                    // ... The rest will be filler up until the postamble
+                    stopAt = u;
+                  }
               }
+              i++;
+              u++;
             }
+          }
   
-            // We have now read one packet
-            packetCount++;
-             
-    
-            // Now, loop through the useful bytes of the data packet and write to the card
-            // We do this in a self-incremented loop from innnerDataBodyStart (5) to < innerDataBodyEnd (37) because we need to bail out 
-            // immediately when we see the end of the JPG data
-            i = innnerDataBodyStart;
-            int bytesWritten = 0;
-            while (!EndFlag && i < innerDataBodyEnd)     
-            {
-              //       Write data to packet to SD card 
-              writePicFile.clearWriteError();
-             // WARNING: SdFat Library seems to have a bug with checking the error status here...
-             // It will always return 0 which, according to the docs, means an error has occurred...
-             // TODO: Reproduce and log as issue or fix.
-             writePicFile.write(packet[i]);
+          // We have now read another packet
+          packetCount++;
+  
+          // Now, just write the entire length to the SD card rather than one byte at a time
+          writePicFile.clearWriteError();
+          // WARNING: SdFat Library seems to have a bug with checking the error status here...
+          // It will always return 0 which, according to the docs, means an error has occurred...
+          // TODO: Reproduce and log as issue or fix.
+          
+          // OK There are two possibilities here:
+          // 1) stopAt == 0 : We read a full set of 32 bytes (innderDataBodyEnd - innerDataBodyStart)
+          // 2) else We only need stopAt+1 bytes
+          if (stopAt == 0)
+            numBytes = (innerDataBodyEnd - innerDataBodyStart);
+          else
+            numBytes = stopAt+1;
+          
+          writePicFile.write(usefulPacket, numBytes);
 
-             if((packet[i-1] == 0xFF) && (packet[i] == 0xD9))  //Check if the picture is over (a JPEG ends with FF D9)
-              {
-                writePicFile.close();
-                Serial.println("File closed");
-                EndFlag = 1;
-                pictureTaken++;
-                // After 99 we'll go back to zero
-                if (pictureTaken > 99)
-                  pictureTaken = 0;
-              }
+          if (stopAt != 0) {
+            // This was the end of the image!
+              writePicFile.close();
+              Serial.println("File closed");
+              EndFlag = 1;
+              pictureTaken++;
+              // After 99 we'll go back to zero
+              if (pictureTaken > 99)
+                pictureTaken = 0;
+            }
                
-               // If we got this far, we are still good to continue processing this packet
-               i++;
+            // If we got this far, we are still good to continue processing this packet
                
-            } // end looping through useful bytes of packet 
+        } // end looping through useful bytes of packet 
              
-        }// end of reading the packets until finished     
   
         Serial.print("Packets: ");
         Serial.println( packetCount);
