@@ -112,11 +112,20 @@ const int postambleSize = 5;  // Number of bytes in the JPEG postamble.  Specifi
 
 //    ------------------------------------------------------------------------------------------
 // !!!! Careful! Original values of 32 and 0x20 are well tested !!!!!
+// 32 / 0x20 / 20 = 26.8 seconds to save
+// 64 / 0x40 / 20 = 19.4 seconds to save
+// 128 / 0x80 / 20 = 15.7 seconds to save
+// 248 / 0xF8 / 20 = 15.1 seconds to save... diminishing returns lets try larger sync ratio
+// 248 / 0xF8 / 40 = 15.4 Not much change.  Perhaps the cameras buffer is not that large?
+// 248 / 0xF8 / 40 @ full speed = 15.0 with some bugginess in POST. Back to half speed
+// 248 / 0xF8 / 80 = about 15.  Keeping it here for now.
 // Camera documentation says it must be an "integer multiple of 8".  The code, as currently written won't support a
 // value >= 256 for sure.
-const int usefulPacketSize = 32; // Number of bytes in the buffer we're asking for
+// TODO: Fix the sendreaddatacmd routine so it can properly split into words so we can go up larger.  Should also
+// Be able to get rid of the redundant jpegReadPacketSize and calculate it automatically.
+const int usefulPacketSize = 248; // Number of bytes in the buffer we're asking for
 // !!!Careful with this one!  This is the number of bytes we ask for in each JPEG payload
-const byte jpegReadPacketSize = 0x20;  // This _MUST_ be the hex equivalent of usefulPacketSize!!
+const byte jpegReadPacketSize = 0xF8;  // This _MUST_ be the hex equivalent of usefulPacketSize!!
 //    ------------------------------------------------------------------------------------------
 
 // This is the FULL packet size from the camera (including preamble/postamble)  Was originally 42 (with 32 byte useful)
@@ -132,7 +141,7 @@ const int innerDataBodyEnd = innerDataBodyStart + usefulPacketSize - 1;
 
 
 
-const int syncInterval = 20;  // Each time we've written this many chunks to the SD card, call a sync...
+const int syncInterval = 80;  // Each time we've written this many chunks to the SD card, call a sync...  Initial was 20s
 
 
 
