@@ -1,0 +1,137 @@
+Setup
+Starting Ethernet Connection
+Ethernet Started
+Zigbee serial initialized
+Loop
+Waiting for next...
+Loop
+Have minimum frame size available
+-- Start of Frame --
+Expected Length:18
+Processing I/O SAMPLE DATA frame
+Source Address: 0 13 A2 0 40 89 EA 6A 
+Source NETWORK Address: 2 B0 
+Receive options: 1 (Packet Acknowledged)
+Number of Samples: 1
+Digital Channel Mask: 0 0 
+Analog Channel Mask: 1
+3 43  analogVals[0]=835
+Bytes Read:18
+Byte count matches
+Supplied Checksum=160
+
+Calculated Checksum=160
+GOOD PACKET
+analogVals[0]=835
+"A0":"835"
+sensor[key]=517c070d8eeea04bb20dd7defbc8be801b424d27&reading[raw]={"A0":"835"}
+Shields Up, about to POST
+sensor[key]=517c070d8eeea04bb20dd7defbc8be801b424d27&reading[raw]={"A0":"835"}
+Stopping client
+FirstReceived: HTTP/1.1 200 OK
+Co
+Waiting for next...
+Loop
+Have minimum frame size available
+-- Start of Frame --
+Expected Length:18
+Processing I/O SAMPLE DATA frame
+Source Address: 0 13 A2 0 40 89 EA 6A 
+Source NETWORK Address: 2 B0 
+Receive options: 1 (Packet Acknowledged)
+Number of Samples: 1
+Digital Channel Mask: 0 0 
+Analog Channel Mask: 1
+3 42  analogVals[0]=834
+Bytes Read:18
+Byte count matches
+Supplied Checksum=161
+
+Calculated Checksum=161
+GOOD PACKET
+analogVals[0]=834
+"A0":"834"
+sensor[key]=517c070d8eeea04bb20dd7defbc8be801b424d27&reading[raw]={"A0":"834"}
+Shields Up, about to POST
+sensor[key]=517c070d8eeea04bb20dd7defbc8be801b424d27&reading[raw]={"A0":"834"}
+Stopping client
+FirstReceived: HTTP/1.1 200 OK
+Co
+Waiting for next...
+Loop
+Have minimum frame size available
+-- Start of Frame --
+Expected Length:18
+Processing I/O SAMPLE DATA frame
+Source Address: 0 13 A2 0 40 89 EA 6A 
+Source NETWORK Address: 2 B0 
+Receive options: 1 (Packet Acknowledged)
+Number of Samples: 1
+Digital Channel Mask: 0 0 
+Analog Channel Mask: 1
+7E 0  analogVals[0]=32256
+Bytes Read:18
+Byte count matches
+Supplied Checksum=18
+
+Calculated Checksum=104
+-- BAD BACKET --
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+-- Start of Frame --
+Expected Length:18
+Processing I/O SAMPLE DATA frame
+Source Address: 0 13 A2 0 7E 0 12 92 
+Source NETWORK Address: 0 13 
+Receive options: A2 (Packet was broadcast packet)
+Number of Samples: 0
+Digital Channel Mask: 1000000 10001001 
+Analog Channel Mask: 11101010
+Digital Samples: 1101010 10 
+Bytes Read:18
+Byte count matches
+Supplied Checksum=176
+
+Calculated Checksum=194
+-- BAD BACKET --
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
+Loop
+Have minimum frame size available
+Waiting for next...
