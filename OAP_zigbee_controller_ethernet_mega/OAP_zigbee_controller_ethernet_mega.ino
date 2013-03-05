@@ -1,49 +1,20 @@
 /*
   One Asset Place Zigbee Controller for Arduino
   
-  This may or may not eventually need a bunch of information written to the EEPROM, but I'll start with it since
-  there is alreay information in there...
+  This may or may not eventually need a bunch of information written to the EEPROM, but we'll start with NOT needing 
+  the info in the EEPROM
   
-  WARNING!! YOU MUST SAVE VALUES IN EEPROM FIRST (with OAP_Setup_EEPROM) BEFORE USING THIS!!!  Here is the current list of saved values:
-  The strings in your EEPROM:
-    START     String
-    -----     -------------------
-    0       POST /readings HTTP/1.1
-    24      Content-Type: multipart/form-data; boundary=
-    69      ----------------------------283499ce49c6
-    110     Host: www.oneassetplace.com
-    138     Content-Length: 
-    155     Content-Disposition: form-data; name="
-    194     reading[sensor_id]"
-    214     sensor[key]"
-    227     517c070d8xxxxxxxxxxxxxxxxxxxxe801b424d27      <--- Replace this with YOUR www.oneassetplace.com security key!!!
-    268     reading[raw]"
-    282     {"1":"image"}     <--- Replace the "1" with your "Sensor Input Seq"!!!!
-    296     reading[image]"; filename="
-    324     Content-Type: image/jpeg
-    349     Connection: close
-  
-  This version had to use AGRESSIVE memory management techniques because we were running out of both FLASH (program) and SRAM (variables) !!!
-  In the UNO we had to resort to using all numeric logging (which was awful).  Here on the MEGA we should have enough SRAM to 
-  have meaningful messages, but we still need to keep them SHORT!
-
-  Basically, we had to eliminate any and all strings we didn't need... Sorry for the lack of readability.  Go back to the separate, working programs
-  (the one that takes pictures and stores them, and the one that sends pictures) to solve your problem if you have debugging issues)
-    
-  Motion triggers camera to take picture.  Store picture as a file on local micro-sd card (of Ethernet shield).  When picture file is complete,
-  send raw picture data as an HTTP Post to One Asset Place.  Delete file locally after sent.
-    
    Needs:
       1) Zigbee setup in controller mode 
       2) Ethernet Shield 
       3) Arduino (Uno should work for this project)
       4) Update the "mac" (MAC Address) in credentials.h from the shield, then place Arduino Ethernet Shield on the Arduino
     
-    Circuit (UNO):  
+    Circuit (MEGA):  
       A) Pin 4 (Digital Output) RESERVED: SS for SD Card
-      B) Pin 5 (Digital Input) to "DOUT" of the zigbee controller
+      B) Pin 16 (Serial2 TX) to "DIN" of the zigbee controller
+      C) Pin 17 (Serial2 RX) to "DOUT" of the zigbee controller
           Remember!  The zigbee's TRANSMIT is _OUR_ RECEIVE and vice-versa!
-      C) Pin 6 (Digital Output) to "DIN" of the zigbee controller
       D) Pin 10 (Digital Output) RESERVED: SS for Ethernet Shield
       E) Pin 11 (Digital Output) RESERVED: SPI to Ethernet Shield
       F) Pin 12 (Digital Output) RESERVED: SPI to Ethernet Shield
@@ -58,18 +29,17 @@
     2013-03-04 - DECj: First version, basing the code off of the successful OAP Motion Camera / Ethernet code
     
     Shout Outs:
+      Robert Faludi and "Building Wireless Sensor Networks"
           
-    Copyright ():
-    Please feel free to use, modify or share this code without restriction. If you'd like to credit One Asset Place or CC-Logic in your 
-    derivatives, that'd be nice too!
+    Copyright (Creative Commons):
+    This software is provided under the Creative Commons Attribution (CC) License
+    See License.md or http://www.tldrlegal.com/L/CC for the actual license
     
 */
 #include <SoftwareSerial.h>
 #include <Ethernet.h>
 #include "Credentials.h"
 #include <SPI.h>
-//#include <SdFat.h>
-//#include <EEPROM.h>
 
 // Name all of our pins
 #define sdCardControlPin 4  // SD Card Control Pin
@@ -135,6 +105,9 @@ char firstReceived[maxToReceive];
 boolean haveDigital;
 
 byte checkSumCalc; // We'll calculate and compare checksum
+
+// Holds the ASCII representation of Source Address of the sending zigbee Sensor (matches OneAssetPlace Sensor Key)
+char sourceAddr[17];  // Includes room for the null terminator
 
 //SoftwareSerial zbSerial(rcvZigbeeSerial, xmtZigbeeSerial); // RX/TX
 
@@ -235,11 +208,16 @@ void loop()
           while(Serial2.available()>0 && i < 8) {
             incomingbyte = Serial2.read();
             addToChecksum(incomingbyte);  // This is part of our checksum
+            // We need the ASCII representation of this HEX string (e.g. we need '2F')
+            // TODO: Better way thansprintf?
+            sprintf(&sourceAddr[i*2], "%02x", incomingbyte); 
             i++;
             Serial.print(incomingbyte, HEX);
             Serial.print(' ');
           }
           Serial.println("");
+          Serial.print("Stored Source Address:");
+          Serial.println(sourceAddr);
           actualLength += i;
   
           // Read the 2 byte 16-bit source NETWORK address
@@ -418,8 +396,13 @@ void loop()
    if (haveDigital == true || pair > 0) {
      // Our Post Data will be of the form:
      // sensor[key]=kdkfdjfdj...sdfdlsfsdf&reading[raw]={"A0":"836"}
-         
-     strcpy(postData, "sensor[key]=517c070d8eeea04bb20dd7defbc8be801b424d27&reading[raw]=");
+     strcpy(postData, "sensor[key]=");
+     
+     // The Sensor Key is the Zigbee Unique address
+     strcat(postData, sourceAddr);
+     
+     // Then we append the reading[raw] parameter
+     strcat(postData, "&reading[raw]=");     
      
      // TODO: Send the Digital values if we have some.
      
@@ -444,8 +427,14 @@ void loop()
        }
        
        strcat(postData, "}");
-       Serial.println(postData);
-     }  // End of building the Analog value JSON
+       
+       // For debugging
+       Serial.print("POSTING:(");
+       Serial.print(postData);
+       Serial.println(")");
+       Serial.print("Length:");
+       Serial.println(strlen(postData));
+       }  // End of building the Analog value JSON
          
      
       // if there's incoming data from the net connection.
@@ -467,7 +456,7 @@ void loop()
         Serial.println("Shields Up, about to POST");  
         // if you get a connection, report back via serial:
         if (client.connect(serverName, serverPort)) {
-          Serial.println( postData );
+
           // Remember, POST is very picky about newlines and dashes!!.  Note the difference between println() and print()
           // use "client." for real, "Serial." for testing...
           
