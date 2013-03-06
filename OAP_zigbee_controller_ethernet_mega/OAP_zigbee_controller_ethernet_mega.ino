@@ -93,6 +93,7 @@ byte digitalSampleField[2]; // Holds the 2-byte set of digital sample
 byte analogMaskField; // Holds the one-byte analog mask value
 byte analogSampleField[2]; // Holds a pair of analog samples
 
+int digitalVal; // Both digital bytes end up as one int value
 int analogVals[4]; // At most we can hold 4 analog values (A0 through A3)
 
 // Warning!  This must be wide enough for your longest data string that is ever possible!
@@ -291,7 +292,7 @@ void loop()
   
           // Now, if the digital mask was NOT 0 0, then we'll get two bytes of the digital samples
           if (digitalMaskField[0] != 0 || digitalMaskField[1] !=0) {
-            // We'll get two bytes of digital data
+            // We'll get TWO bytes of digital data
             haveDigital = true;
             i = 0;
             Serial.print("Digital Samples: ");
@@ -303,12 +304,17 @@ void loop()
               Serial.print(incomingbyte, BIN);
               Serial.print(" ");
             }
-            Serial.println("");
+            // Since, even if ALL bits are on, the largest value we would get is
+            // decimal 7,423, we'll just store this as an int and parse it out server-side
+            digitalVal = word(digitalSampleField[0],digitalSampleField[1]);
+            Serial.print("Digital Value as decimal: ");
+            Serial.println(digitalVal);
             actualLength += i;
           }
           else {
             // Nothing digital
             haveDigital = false;
+            digitalVal = 0;
           }
            
            
@@ -403,14 +409,15 @@ void loop()
      
      // Then we append the reading[raw] parameter
      strcat(postData, "&reading[raw]=");     
-     
-     // TODO: Send the Digital values if we have some.
+
+     // Start the JSON
+     // TODO: If there are NO digital and NO analog values, we'll have an empty JSON... OK?
+     strcat(postData, "{");
      
      // Assuming there are some ANALOG values, make a JSON to contain them
      if (pair != 0) {
-       strcat(postData, "{"); // start the JSON 
        
-       // For each analog pair, create the json
+       // For each analog pair, add to the json
        for (i=0; i<pair; i++) {
         
         // Analog readings are in the form "An":"value"
@@ -423,18 +430,38 @@ void loop()
         charsInData = sprintf(smallChunk, "\"A%d\":\"%d\"", i, analogVals[i]);
         
         //Serial.println(smallChunk);
+        if (i > 0) {
+          // Need a comma before the subsequent json
+          strcat(postData, ",");
+        }
         strcat(postData, smallChunk);
-       }
-       
+       } // End for each ANALOG pair
+ 
+     }  // End of building the Analog value JSON
+ 
+     // Now, if there were any DIGITAL values, send them as a single word
+     if (haveDigital == true) {
+         // Yes, we have digital
+         if (pair != 0) {
+           // We also had some Analog, so the json has been started and has at least 1 element
+           // Need a comma before the subsequent json
+          strcat(postData, ",");
+         }
+         
+         // Now send this as "digitalvals":"<intval>"
+         charsInData = sprintf(smallChunk, "\"digitalvals\":\"%d\"", digitalVal);
+         strcat(postData, smallChunk);
+     }
+ 
+      // END the json
        strcat(postData, "}");
-       
+ 
        // For debugging
        Serial.print("POSTING:(");
        Serial.print(postData);
        Serial.println(")");
        Serial.print("Length:");
        Serial.println(strlen(postData));
-       }  // End of building the Analog value JSON
          
      
       // if there's incoming data from the net connection.
