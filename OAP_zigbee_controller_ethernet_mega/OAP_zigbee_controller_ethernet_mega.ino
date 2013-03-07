@@ -98,7 +98,7 @@ int analogVals[4]; // At most we can hold 4 analog values (A0 through A3)
 
 // Warning!  This must be wide enough for your longest data string that is ever possible!
 // Our string is in the format of "reading[sensor_id]=1&reading[reported]=x";
-char postData[100];
+char postData[110];
 char smallChunk[20];
 int charsInData;
 const int maxToReceive = 20;
@@ -131,8 +131,8 @@ void setup() {
       If you're not using one of the peripherals in your program, however, you'll need to explicitly deselect it.
       To do this with the SD card, set pin 4 as an output and write a high to it. 
   */
-  //pinMode(sdCardControlPin, OUTPUT);
-  //digitalWrite(sdCardControlPin, HIGH);
+  pinMode(sdCardControlPin, OUTPUT);
+  digitalWrite(sdCardControlPin, HIGH);
 
   
   // start the Ethernet connection:
@@ -252,14 +252,14 @@ void loop()
           actualLength += i;
   
     
-          // Read the 1 byte Number of Samples (Always 1)
+          // Read the 1 byte Number of Samples (Always 1 Don't log)
           i = 0;
-          Serial.print("Number of Samples: ");
+          // Serial.print("Number of Samples: ");
           while(Serial2.available()>0 && i < 1) {
             incomingbyte = Serial2.read();
             addToChecksum(incomingbyte);  // This is part of our checksum
             i++;
-            Serial.println(incomingbyte, HEX);
+            //Serial.println(incomingbyte, HEX);
           }
           actualLength += i;
   
@@ -360,14 +360,10 @@ void loop()
           
           
           // At this point we've read "expectedLength" bytes, and all that should be left is the checksum
-          Serial.print("Bytes Read:");
-          Serial.println(actualLength);
-          
           if (actualLength != expectedLength) {
             Serial.println("ERROR: Byte count mismatch");
-          }
-          else {
-            Serial.println("Byte count matches");
+            Serial.print("Bytes Read:");
+            Serial.println(actualLength);
           }
           
           byte checksumField;
@@ -503,18 +499,17 @@ void loop()
           Serial.println("Error: Ethernet Connect Fail");
         }
       
-      
           // NORMALLY what happens in this scenario, is the SERVER closes the connection, which will
           // exit out of this loop after you've gathered all the response data...  If, for some reason,
           // we get no response (and the connection just hangs) the deadManTimer should eventually kick
           // us out of this loop.
           if (client.connected() == true) {
             const unsigned long deadManTimer = 6000;    // Six seconds is all we'll wait at this point
-            unsigned long startWaitTime;  // SD.size() returns unsigned long
+            unsigned long startWaitTime;  // millis returns unsigned long
             startWaitTime = millis();
 
             // TODO: I think you should also check client.connected again because I think we're waiting for the timeout all the time
-            while ((millis() - startWaitTime) < deadManTimer) {
+            while (((millis() - startWaitTime) < deadManTimer) && client.connected() == true) {
            
               // Handle the data coming back! .available returns the number of bytes available for reading
               while (client.available() > 0) {
@@ -571,6 +566,7 @@ void loop()
               // I believe we're getting the 302 moved when we send the same filename, so that is OK too
               Serial.println("201 Success or 302 Moved");
               
+              // TODO: In future, the response may contain some control instructions...
             }
       
             
@@ -587,18 +583,10 @@ void loop()
    
 void addToChecksum(byte newval) {
    // Keeps a running Zigbee checksum
-   //Serial.print("Checksum: Old=");
-   //Serial.print(checkSumCalc);
-   //Serial.print(" +");
-   //Serial.print(newval);
    checkSumCalc += newval;
-   //Serial.print(" B4_AND=");
-   //Serial.print(checkSumCalc);
    // Keep only the lowest 8 bits
    checkSumCalc = checkSumCalc & 0xFF;
-   //Serial.print(" After=");
-   //Serial.println(checkSumCalc);
-   
+  
  }
    
    
