@@ -467,8 +467,8 @@ void loop()
             unsigned long startWaitTime;  // SD.size() returns unsigned long
             startWaitTime = millis();
 
-            // TODO: I think you should also check client.connected again because I think we're waiting for the timeout all the time
-            while ((millis() - startWaitTime) < deadManTimer) {
+            // Note that we also check client.connected again because we were waiting for the timeout all the time
+            while ((millis() - startWaitTime) < deadManTimer && client.connected() == true) {
            
               // Handle the data coming back! .available returns the number of bytes available for reading
               while (client.available() > 0) {
@@ -516,10 +516,10 @@ void loop()
             Serial.print("FirstReceived: ");
             Serial.println(firstReceived);
             
-            if (strstr(firstReceived, "201") != NULL  || strstr(firstReceived, "302") != NULL) {
+            if (strstr(firstReceived, "201") != NULL  || strstr(firstReceived, "302") != NULL || strstr(firstReceived, "200") != NULL){
               // Successful Transfer!
-              // I believe we're getting the 302 moved when we send the same filename, so that is OK too
-              Serial.println("201 Success or 302 Moved");
+              // Anything even CLOSE to success should delete the file, otherwise we keep re-sending
+              Serial.println("200 OK, 201 Success, or 302 Moved");
               
               // Delete the file from our local SD card
               sd.remove(name);
