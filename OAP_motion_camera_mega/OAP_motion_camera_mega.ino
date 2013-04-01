@@ -72,6 +72,7 @@
     2013-02-05 - DECj: Finished MEGA board testing in the other project.  Continuing mods here.  No longer using SoftwareSerial.
     2013-02-04 - DECj: Successful multi-picture MEGA run!
     2013-02-20 - DECj: Attempting to change from Arduino's SD Library to SdFat.  SdFat supposedly has fewer memory leaks and is faster.
+    2013-03-26 - DECj: Fixed to be OK with http 200 as well.  Also don't wait for timeout at end of POST.
     
     Shout Outs:
       To "salacain" (Arduino forum) of Ashburn, VA for posting some code that was a starting point for grabbing images from the camera 
@@ -528,6 +529,11 @@ void loop()
             // Record our status (which really is always going to be "disconnected"
             lastConnected = client.connected();
           } // end if the data file is open
+          else {
+            // The file existed but didn't open... Should log
+            Serial.print("ERROR: File existed but could not open:");
+            Serial.println(name);
+          }
         }  // end if file exists
         //  ===============================  END of code to SEND a single picture file to the server  ===================
             
